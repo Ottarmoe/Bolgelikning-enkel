@@ -114,7 +114,8 @@ struct zoomerControlSuite{
     void update(){
         auto thisTime = timeMicroseconds();
         double fpeffc = double(thisTime - t0)/1000000.;
-        fps = fps*(1-fpeffc) + 1000000./double(thisTime - t0)*fpeffc;
+        lastFrameTime = thisTime - t0;
+        fps = fps*(1-fpeffc) + 1000000./double(lastFrameTime)*fpeffc;
         t0 = thisTime;
 
         lastpos = pos;
