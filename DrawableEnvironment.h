@@ -6,7 +6,10 @@
 #include "myrandoms.h"
 #include "mytimes.h"
 #include <functional>
+#include <list>
+#include <math.h>
 
+typedef TDT4102::Color Color;
 
 class KeyRising
 {
@@ -107,8 +110,8 @@ struct zoomerControlSuite{
     
     zoomerControlSuite(TDT4102::AnimationWindow& win, double z0 = 3)
         :t0(timeMicroseconds()),lastFrameTime(10000), fps(20),
-        pos(win, KeyboardKey::P, KeyboardKey::O, KeyboardKey::DOWN, KeyboardKey::LEFT, KeyboardKey::UP, KeyboardKey::RIGHT),
-        linzoom(win, KeyboardKey::K, KeyboardKey::L, z0), 
+        pos(win, KeyboardKey::C, KeyboardKey::X, KeyboardKey::S, KeyboardKey::A, KeyboardKey::W, KeyboardKey::D),
+        linzoom(win, KeyboardKey::LEFT_CTRL, KeyboardKey::LEFT_SHIFT, z0), 
         expzoom(exp(z0))
     {}
     void update(){
@@ -121,7 +124,7 @@ struct zoomerControlSuite{
         lastpos = pos;
         lastexpzoom = expzoom;
 
-        linzoom.update(pos.scale/300);
+        linzoom.update(pos.scale/100.);
 		expzoom = exp(linzoom.value);
 		pos.update(expzoom);
     }
@@ -146,29 +149,15 @@ struct controlRegister{
     vec2 mousepos = {0,0};
 };
 
-struct tablet{
-    screen footprint;
-    controlRegister controls;
-    std::function<void(TDT4102::AnimationWindow& win, const UniformTransform<float>& trans)> draw;
+class DrawableEnvironment;
 
-    tablet(screen foot, std::function<void(TDT4102::AnimationWindow& win, const UniformTransform<float>& trans)> drw = 0)
-        :footprint(foot), controls(), draw(drw) {}
+struct Drawable{
+    virtual void draw(DrawableEnvironment& src) = 0;
+    virtual void update(DrawableEnvironment& src) = 0;
+    //used by the DrawableEnvironment to keep track of what drawable is where
+    std::list<Drawable*>::iterator footprint;
 };
 
-static uint64_t ZEROES[] = {0,0,0,0,0,0,0,0};
-struct socket{
-    vec2 pos;
-    bool sending = 0; //0 for recieving, 1 for sending
-    void* source = ZEROES;
-    uint connection;
-    //if sending, connections are not interpreted. Source is a pointer
-    //to a variable with the information being sent.
-    //if recieving, source is set equal to the source of the sender
-    //and connection to the index of the sender.
-    //Note that senders are not altered by connecting to new recievers
-    //connections are drawn from reciever to sender
-    //you cannot disconnect a reciever from a sender
-};
 
 
 class DrawableEnvironment{
@@ -176,18 +165,23 @@ private:
     //the AnimationWindow class does not obay const function qualification rules
     mutable TDT4102::AnimationWindow win;
 
-    ScreenMap wToScreen;
-
     zoomerControlSuite eye;
 
+    std::list<Drawable*> drawables;
+
 public:
+    ScreenMap wToScreen;
+    ivec2 lastMouse = {0,0};
+    ivec2 deltaMouse = {0,0};
+    bool mouseLeftClick = false;
+    bool mouseLeftHeld = false;
     //screen worldscreen;
     //screen screenscreen;
     //UniformTransform<float> toScreen;
 
     DrawableEnvironment(uvec2 dims = {512, 512}):
         win(50, 50, int(dims.x), int(dims.y)), 
-        wToScreen(screen({0,0},{100,100}), screen({0,0},{100,100})), eye(win, 0.){}
+        eye(win, 0.), wToScreen(screen({0,0},{100,100}), screen({0,0},{100,100})){}
     uvec2 getDims() const{
         return {uint(win.width()), uint(win.height())};
     }
@@ -204,8 +198,15 @@ public:
     }
 
     void drawGrid(float scale, vec3 col = {0.5,0.5,0.5}){
-        vec2 bml = wToScreen*(vec2(wToScreen.from.lower.x-fmod(wToScreen.from.lower.x, scale),wToScreen.from.lower.y-fmod(wToScreen.from.lower.y, scale)));
         vec2 ssc = vec2(scale, scale)*wToScreen.scale;
+        //dynamic change of scale
+        float scal = 1;
+        while(ssc.x < 20){
+            scal*=2;
+            ssc*=2;
+        }
+        scale *= scal;
+        vec2 bml = wToScreen*(vec2(wToScreen.from.lower.x-fmod(wToScreen.from.lower.x, scale),wToScreen.from.lower.y-fmod(wToScreen.from.lower.y, scale)));
         for(float dd = bml.x; dd < wToScreen.to.higher.x; dd+= ssc.x)
             win.draw_line({int(dd), 0}, {int(dd), int(wToScreen.to.higher.y)}, col);
 
@@ -213,19 +214,18 @@ public:
             win.draw_line({0, int(dd)}, {int(wToScreen.to.higher.x), int(dd)}, col);
     }
 
-
-    void control(){
-        updatePanner();
-    }
-
-    void render(){
-        win.draw_circle(wToScreen*vec2{0,0}, int(10.*wToScreen.scale.x));
-        drawGrid(20);
-        win.next_frame();
+    void drawSubScreen(const screen& foot, TDT4102::Color body = TDT4102::Color::light_gray, TDT4102::Color border = TDT4102::Color::black){
+        win.draw_rectangle(foot.lower, int(foot.higher.x-foot.lower.x), int(foot.higher.y-foot.lower.y), body, border);
     }
 
     vec2 getWorldMousePos() const{
         return wToScreen.antitransform(win.get_mouse_coordinates());
+    }
+    bool mouseRight() const{
+        return win.is_right_mouse_button_down();
+    }
+    bool mouseLeft() const{
+        return win.is_left_mouse_button_down();
     }
     
     double getfps() const{
@@ -237,5 +237,125 @@ public:
     uint64_t getCurrFrameTime(){
         return timeMicroseconds()-eye.t0;
     }
+
+    void bind(Drawable& drawab){
+        drawables.emplace_back(&drawab);
+        drawab.footprint = drawables.end()--;
+    }
+    void release(Drawable& drawab){
+        drawables.erase(drawab.footprint);
+    }
+
+    void control(){
+        //mouse stuff
+        ivec2 thisMouse = win.get_mouse_coordinates();
+        deltaMouse = thisMouse - lastMouse;
+        lastMouse = thisMouse;
+        bool mouseHeldNow = mouseLeft();
+        if(mouseLeftClick) mouseLeftClick = false;
+        if(!mouseLeftHeld && mouseHeldNow) mouseLeftClick = true;
+        mouseLeftHeld = mouseHeldNow;
+        //mouse controls
+        if(mouseRight()){
+            vec2 change =  vec2(deltaMouse)/wToScreen.scale;
+            eye.pos.x -= change.x;
+            eye.pos.y -= change.y;
+        }
+        eye.linzoom.value -= win.getScrollWheelMotion()*0.3;
+        updatePanner();
+
+        for(auto dr : drawables)
+            dr->update(*this);
+    }
+
+    void render(){
+        win.draw_circle(wToScreen*vec2{0,0}, int(10.*wToScreen.scale.x));
+        drawGrid(10);
+        for(auto dr : drawables)
+            dr->draw(*this);
+        win.next_frame();
+    }
     
+};
+
+struct DraggableFrame : Drawable{
+    screen foot;
+
+    bool draggable = true;
+    bool boxHeld = false;
+
+    DraggableFrame(screen startpos = {{0,0},{100,100}})
+        :foot(startpos) {}
+
+    virtual void update(DrawableEnvironment& src){
+        if(!draggable){
+            boxHeld = false;
+            return;
+        }
+        if(boxHeld){
+            vec2 itr = vec2(src.deltaMouse)/src.wToScreen.scale;
+            foot.lower += itr;
+            foot.higher += itr;
+        }
+        if(src.mouseLeftClick && foot.contains(src.getWorldMousePos())){
+            boxHeld = true;
+        }
+        if(!src.mouseLeftHeld) boxHeld = false;
+    }
+
+    virtual void draw(DrawableEnvironment& src){
+        Color col = Color::light_gray;
+        if(boxHeld) col = Color::teal;
+        src.drawSubScreen(src.wToScreen*foot, col);
+    }
+};
+
+struct Option{
+    std::string label;
+    
+};
+struct Options : DraggableFrame{
+    float lineHeight;
+    float lineWidth;
+    std::vector<Option> menu;
+};
+
+struct grapher : DraggableFrame{
+    std::vector<float> graph;
+    float miny, maxy;
+
+    void resize(uint siz){
+        graph.resize(siz);
+    }
+
+    template<typename T> 
+    void load(std::vector<T> gra, float fetch(const T&)){
+        float leap = float(gra.size())/float(graph.size());
+        for(uint i = 0; i<uint(graph.size()); ++i){
+            float fpos = leap*float(i);
+            uint hgi = (uint)std::min(int(ceil(fpos)), int(gra.size()));
+            uint lwi = (uint)std::max(int(floor(fpos)), 0);
+            float lwd = fpos-float(lwi);
+            float hg = fetch(gra[hgi]);
+            float lw = fetch(gra[lwi]);
+            graph[i] = hg*lwd + lw*(1-lwd);
+        }
+    }
+    void draw(DrawableEnvironment& src){
+        DraggableFrame::draw(src);
+        if(graph.size() < 2) return;
+
+        screen graphscr({0, miny}, {float(graph.size()-1), maxy});
+        ScreenMap graphTscr = src.wToScreen*ScreenMap(graphscr, foot);
+
+        TDT4102::AnimationWindow& win = src.getwin();
+        vec2 lasty = {0,graph[0]};
+
+        for(uint i = 1; i<(uint)graph.size(); ++i){
+            vec2 newy = {float(i), graph[i]};
+            win.draw_line(graphTscr*lasty, graphTscr*newy, Color::red);
+            lasty = newy;
+        }
+    }
+
 };

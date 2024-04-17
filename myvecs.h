@@ -55,7 +55,7 @@ template<class T> struct vec2t {
 
     vec2t(const TDT4102::Point& pt)
         :x(T(pt.x)), y(T(pt.y)){}
-    operator TDT4102::Point(){
+    operator TDT4102::Point() const{
         return {int(x), int(y)};
     }
 };
@@ -189,6 +189,11 @@ template<typename T> struct quadt{
     quadt(vec2t<T> lw, vec2t<T> hg)
         :lower(lw), higher(hg)
     {}
+    bool contains(const vec2t<T>& vec){
+        return
+            vec.x>=lower.x && vec.x <= higher.x &&
+            vec.y>=lower.y && vec.y <= higher.y;
+    }
 };
 template<typename T>
 bool isOverlap(const quadt<T>& a, const quadt<T>& b){

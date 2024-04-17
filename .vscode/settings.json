@@ -70,6 +70,7 @@
         "typeinfo": "cpp",
         "variant": "cpp",
         "condition_variable": "cpp",
-        "mutex": "cpp"
+        "mutex": "cpp",
+        "list": "cpp"
     }
 }

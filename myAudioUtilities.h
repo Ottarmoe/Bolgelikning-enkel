@@ -4,7 +4,6 @@
 #include <windows.h>
 #include <mmeapi.h>
 #include <stdint.h>
-#define _USE_MATH_DEFINES
 #include <math.h>
 #include <thread>
 #include <vector>
@@ -12,17 +11,6 @@
 
 #include "myvecs.h"
 
-
-static double GLOBALFREQ = 440;
-// Function to get the next sample of a sine wave
-int16_t getNextPhaseSample() {
-    const double sampleRate = 44100.0;  // Adjust as needed
-    static double phase = 0;
-    if(phase > 2*M_PI) phase -= 2*M_PI;
-
-    phase += GLOBALFREQ*2*M_PI/double(sampleRate);
-    return int16_t(sin(phase)*double(INT16_MAX/4));
-}
 void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2);
 
 //struct that is passed along with the audio buffer header
@@ -100,8 +88,8 @@ private:
 		//prepare buffers
 		timeLastWrite = timeMicroseconds();
 
-		waveHdr1 = WAVEHDR{0, 0};
-		waveHdr2 = WAVEHDR{0, 0};
+		waveHdr1 = WAVEHDR{0, 0, 0, 0, 0, 0, 0, 0};
+		waveHdr2 = WAVEHDR{0, 0, 0, 0, 0, 0, 0, 0};
 		waveHdr1Inf.boundVector = &buff1;
 		waveHdr2Inf.boundVector = &buff2;
 		waveHdr1.lpData = LPSTR(buff1.data());
@@ -151,10 +139,22 @@ public:
 	uint getDesiredBlockSize() const {return sampleBlockSize;}
 	uint getBlockSize() const {return uint(que.vec.size());}
 
+	//take an int16_t, with unbounded max and min value
 	void queueSample(const int16_t& samp){
 		//std::lock_guard<std::mutex> guard(queWriteControl);
 		que.enter();
 		que.vec.push_back(samp);
+		que.exit();
+	}
+	//take a floating point value with minimum -1 and maximum 1 value
+	void queueSample(const double& samp){
+		que.enter();
+		que.vec.push_back(int16_t(samp*double(INT16_MAX)));
+		que.exit();
+	}
+	void queueSample(const float& samp){
+		que.enter();
+		que.vec.push_back(int16_t(samp*float(INT16_MAX)));
 		que.exit();
 	}
 
@@ -164,10 +164,13 @@ public:
 
 };
 
-
+//get rid of pesky compiler warnings
+#define UNUSED(x) (void)(x)
 
 void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2) {
-    AudioStream* pstrm = (AudioStream*)dwInstance;
+    UNUSED(dwParam2); 
+
+	AudioStream* pstrm = (AudioStream*)dwInstance;
 	if(pstrm->shouldClose) return;
 	
 	if(uMsg == WOM_CLOSE)
@@ -178,7 +181,7 @@ void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWO
     
     // Retrieve the audio buffer information
     WAVEHDR* pWaveHdr = reinterpret_cast<WAVEHDR*>(dwParam1);
-    int16_t* pBuffer = reinterpret_cast<int16_t*>(pWaveHdr->lpData);
+    //int16_t* pBuffer = reinterpret_cast<int16_t*>(pWaveHdr->lpData);
 	audioBufferInfo* pinf = (audioBufferInfo*)pWaveHdr->dwUser;
 
     // Release the audio buffer
@@ -200,12 +203,12 @@ void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWO
 		if(writtenSize == 0) pinf->boundVector->push_back(0);
 		//std::cout<<"too little info written "<<writtenSize<<std::endl;
 		writtenSize = 1000;
-		for(uint i = pinf->boundVector->size(); i<1000; ++i)
+		for(uint i = (uint)pinf->boundVector->size(); i<1000; ++i)
 			pinf->boundVector->push_back(pinf->boundVector->at(i-1));
 	}
 	//move into the next stack if too long
 	else if(writtenSize > pstrm->sampleBlockSize+500){
-		for(int i = pstrm->sampleBlockSize; i<writtenSize; ++i){
+		for(uint i = pstrm->sampleBlockSize; i<writtenSize; ++i){
 			pstrm->que.vec.push_back(pinf->boundVector->at(i));
 		}
 		writtenSize = pstrm->sampleBlockSize;
@@ -241,16 +244,5 @@ void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWO
 	pstrm->que.exit();
 	//std::cout<<"successfull callback execution"<<std::endl;
 	
-
-
-    /*for (DWORD i = 0; i < pWaveHdr->dwBufferLength / sizeof(int16_t); ++i) {
-        pBuffer[i] = getNextPhaseSample();
-    }
-
-    // Prepare the buffer for playback
-    waveOutPrepareHeader(hwo, pWaveHdr, sizeof(WAVEHDR));
-
-    // Queue the buffer for playback
-    waveOutWrite(hwo, pWaveHdr, sizeof(WAVEHDR));*/
 
 }
