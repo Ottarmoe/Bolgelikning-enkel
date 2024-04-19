@@ -189,6 +189,14 @@ template<typename T> struct quadt{
     quadt(vec2t<T> lw, vec2t<T> hg)
         :lower(lw), higher(hg)
     {}
+    quadt<T> operator+(const vec2t<T>& addend){
+        return quadt<T>{lower+addend, higher+addend};
+    }
+    quadt<T> operator-(const vec2t<T>& subtrahend){
+        return quadt<T>{lower-subtrahend, higher-subtrahend};
+    }
+
+
     bool contains(const vec2t<T>& vec){
         return
             vec.x>=lower.x && vec.x <= higher.x &&

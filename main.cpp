@@ -22,19 +22,37 @@ int main() {
     AudioStream austr(44100, 4000);
     String<float> stringsim;
     //stringsim.substeps = 2;
-    grapher op;
-    op.miny = -1;
-    op.maxy = 1;
-    op.resize(300);
-    op.load(stringsim.string, fetchY);
-    env.bind(op);
+    grapher gra;
+    gra.miny = -1;
+    gra.maxy = 1;
+    gra.resize(50);
+    env.bind(gra);
 
+    Pick lastpick = {0,0,0};
     while(!env.getwin().should_close()){
-        uint numtoQueue = std::min(austr.numQueuedIn(env.getFrameTime()), 10000u);
-        for(uint i = 0; i<numtoQueue; ++i){
-            austr.queueSample(stringsim.step());
+        Pick thispick;
+        thispick.active = gra.localHeld;
+        if(thispick.active){
+            thispick.pos = gra.localMousePosition(env);
+            thispick.pos.y = thispick.pos.y*(gra.maxy-gra.miny)+gra.miny;
+            thispick.radius = 0.01f;
         }
-        op.load(stringsim.string, fetchY);
+
+        uint numtoQueue = std::min(austr.numQueuedIn(env.getFrameTime()), 10000u);
+        
+        uint substeps = 1;
+
+        vec2 pickstep = (thispick.pos-lastpick.pos)*(1.f/float(numtoQueue*substeps));
+        for(uint i = 0; i<numtoQueue; ++i){
+            for(int s = 0; s<substeps-1; ++s){
+                lastpick.pos += pickstep;
+                stringsim.stepStroked(lastpick);
+            }
+            lastpick.pos += pickstep;
+            austr.queueSample(stringsim.stepStroked(lastpick));
+        }
+        lastpick = thispick;
+        gra.load(stringsim.string, fetchY);
         env.control();
         env.render();
     }

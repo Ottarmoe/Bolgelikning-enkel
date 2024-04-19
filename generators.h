@@ -20,10 +20,11 @@ struct sinusoidalGenerator{
 };
 
 
-
-
-
-
+struct Pick{
+    bool active;
+    vec2 pos;
+    float radius;
+};
 
 template<typename T>
 struct StringSegment{
@@ -41,8 +42,6 @@ struct String{
     //T airResistance; //in N/(m*(m/s))
     //T nonElasticFct; //m^-1 ?
     //T edgeConductance;
-
-    uint substeps = 1;
 
     String(){
         string.resize(300);
@@ -69,24 +68,66 @@ struct String{
         T stepSize = 1.f/80000.f;
 
 
-        for(uint s = 0; s<substeps; ++s){
-            //edges bleed energy in that their displacement is always drawn toward 0
-            for(size_t i = 1; i<string.size()-1; ++i){
-                StringSegment<T>& me = string[i];
-                T dylw = me.y-string[i-1].y;
-                T dyhg = string[i+1].y-me.y;
-                T ddy = dylw-dyhg;
-                me.dy -= ddy*segmentStiffness*stepSize;
-                me.dy *= airTransferrance;
-                me.y -= ddy*stepSize*elasticFriction;
-            }
-            for(size_t i = 1; i<string.size()-1; ++i){
-                StringSegment<T>& me = string[i];
-                me.y += me.dy * stepSize;
-            }
-            string[1].y               *= edgeConductance;
-            string[string.size()-2].y   *= edgeConductance;
+        //edges bleed energy in that their displacement is always drawn toward 0
+        for(size_t i = 1; i<string.size()-1; ++i){
+            StringSegment<T>& me = string[i];
+            T dylw = me.y-string[i-1].y;
+            T dyhg = string[i+1].y-me.y;
+            T ddy = dylw-dyhg;
+            me.dy -= ddy*segmentStiffness*stepSize;
+            me.dy *= airTransferrance;
+            me.y -= ddy*stepSize*elasticFriction;
         }
+        for(size_t i = 1; i<string.size()-1; ++i){
+            StringSegment<T>& me = string[i];
+            me.y += me.dy * stepSize;
+        }
+        string[1].y               *= edgeConductance;
+        string[string.size()-2].y   *= edgeConductance;
+
+        return (string[1].y-string[string.size()-2].y)*10;
+    }
+
+    T stepStroked(const Pick& pick){
+        T segmentStiffness = 6400000000.f;
+        T edgeConductance = 0.99f;
+        T airTransferrance = 0.99999f;
+        T elasticFriction = 0.01f;
+        T stepSize = 1.f/80000.f;
+
+
+        //edges bleed energy in that their displacement is always drawn toward 0
+        for(size_t i = 1; i<string.size()-1; ++i){
+            StringSegment<T>& me = string[i];
+            T dylw = me.y-string[i-1].y;
+            T dyhg = string[i+1].y-me.y;
+            T ddy = dylw-dyhg;
+            me.dy -= ddy*segmentStiffness*stepSize;
+            me.dy *= airTransferrance;
+            me.y -= ddy*stepSize*elasticFriction;
+        }
+
+
+        if(pick.active){
+            uint pickx = (uint)round(pick.pos.x*(float)(string.size()-1));
+
+            if(pickx > 0 && pickx < string.size()-1) 
+            if(abs(string[pickx].y-pick.pos.y)<=pick.radius){
+                if(abs(string[pickx].dy)>pick.radius*3) string[pickx].dy=0;
+                string[pickx].dy *= 0.5;
+                string[pickx].y = pick.pos.y+pick.radius*((pick.pos.y>string[pickx].y)? -0.99 : 0.99);
+            }
+        }
+
+
+
+
+        for(size_t i = 1; i<string.size()-1; ++i){
+            StringSegment<T>& me = string[i];
+            me.y += me.dy * stepSize;
+        }
+        string[1].y               *= edgeConductance;
+        string[string.size()-2].y   *= edgeConductance;
         return (string[1].y-string[string.size()-2].y)*10;
     }
 };

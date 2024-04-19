@@ -2,12 +2,14 @@
 
 #include "AnimationWindow.h"
 #include "widgets/TextInput.h"
+#include "widgets/Button.h"
 #include "myvecs.h"
 #include "myrandoms.h"
 #include "mytimes.h"
 #include <functional>
 #include <list>
 #include <math.h>
+
 
 typedef TDT4102::Color Color;
 
@@ -175,9 +177,6 @@ public:
     ivec2 deltaMouse = {0,0};
     bool mouseLeftClick = false;
     bool mouseLeftHeld = false;
-    //screen worldscreen;
-    //screen screenscreen;
-    //UniformTransform<float> toScreen;
 
     DrawableEnvironment(uvec2 dims = {512, 512}):
         win(50, 50, int(dims.x), int(dims.y)), 
@@ -216,6 +215,9 @@ public:
 
     void drawSubScreen(const screen& foot, TDT4102::Color body = TDT4102::Color::light_gray, TDT4102::Color border = TDT4102::Color::black){
         win.draw_rectangle(foot.lower, int(foot.higher.x-foot.lower.x), int(foot.higher.y-foot.lower.y), body, border);
+    }
+    vec2 getMousePos() const{
+        return win.get_mouse_coordinates();
     }
 
     vec2 getWorldMousePos() const{
@@ -282,12 +284,21 @@ struct DraggableFrame : Drawable{
     screen foot;
 
     bool draggable = true;
+protected:
     bool boxHeld = false;
+public:
+
+    Color defaultBodyColor = Color::light_gray;
+    Color bodyColor = Color::light_gray;
+    Color defaultBorderColor = Color::black;
+    Color borderColor = Color::black;
 
     DraggableFrame(screen startpos = {{0,0},{100,100}})
         :foot(startpos) {}
 
     virtual void update(DrawableEnvironment& src){
+        borderColor = defaultBorderColor;
+        bodyColor = defaultBodyColor;
         if(!draggable){
             boxHeld = false;
             return;
@@ -296,6 +307,7 @@ struct DraggableFrame : Drawable{
             vec2 itr = vec2(src.deltaMouse)/src.wToScreen.scale;
             foot.lower += itr;
             foot.higher += itr;
+            bodyColor = Color::teal;
         }
         if(src.mouseLeftClick && foot.contains(src.getWorldMousePos())){
             boxHeld = true;
@@ -304,23 +316,101 @@ struct DraggableFrame : Drawable{
     }
 
     virtual void draw(DrawableEnvironment& src){
-        Color col = Color::light_gray;
-        if(boxHeld) col = Color::teal;
-        src.drawSubScreen(src.wToScreen*foot, col);
+        src.drawSubScreen(src.wToScreen*foot, bodyColor, borderColor);
     }
 };
 
-struct Option{
-    std::string label;
-    
-};
-struct Options : DraggableFrame{
-    float lineHeight;
-    float lineWidth;
-    std::vector<Option> menu;
+struct ScaleableFrame : DraggableFrame{
+protected:
+    bool boxScaling = false;
+    int draggingVariable; //1 for left, 2 for right, 3 for up, 4 for down
+public:
+    float scalingLeneancy = 5; //in pixels
+
+    ScaleableFrame(screen startpos = {{0,0},{100,100}})
+        :DraggableFrame(startpos) {}
+
+    virtual void update(DrawableEnvironment& src){
+        DraggableFrame::update(src); 
+        if(!draggable || boxHeld){
+            return;
+        }
+        screen smallFoot = src.wToScreen*foot;
+        screen bigFoot = {smallFoot.lower-vec2{scalingLeneancy, scalingLeneancy}, smallFoot.higher+vec2{scalingLeneancy, scalingLeneancy}};
+        vec2 mousePos = src.getMousePos();
+        if(bigFoot.contains(mousePos) && (!smallFoot.contains(mousePos))){
+            borderColor = Color::orange;
+            if(src.mouseLeftClick){
+                boxScaling = true;
+                if(mousePos.x <= smallFoot.lower.x) draggingVariable = 1;//left
+                else if(mousePos.x >= smallFoot.higher.x) draggingVariable = 2;//right
+                else if(mousePos.y <= smallFoot.lower.y) draggingVariable = 3;//up
+                else draggingVariable = 4;//down
+            }
+        }
+        if(boxScaling == true){
+            if(src.mouseLeftHeld){
+                vec2 itr = vec2(src.deltaMouse)/src.wToScreen.scale;
+                if(draggingVariable == 1) {
+                    foot.lower.x += itr.x;
+                    if(foot.lower.x >= foot.higher.x) foot.lower.x -= itr.x;
+                }
+                else if(draggingVariable == 2) {
+                    foot.higher.x += itr.x;
+                    if(foot.lower.x >= foot.higher.x) foot.higher.x -= itr.x;
+                }
+                else if(draggingVariable == 3){
+                    foot.lower.y += itr.y;
+                    if(foot.lower.y >= foot.higher.y) foot.lower.y -= itr.y;
+                }
+                else if(draggingVariable == 4){
+                    foot.higher.y += itr.y;
+                    if(foot.lower.y >= foot.higher.y) foot.higher.y -= itr.y;
+                }
+            }
+            else boxScaling = false;
+        }
+    }
 };
 
-struct grapher : DraggableFrame{
+struct PinableFrame : ScaleableFrame{
+    float pinRadius = 2.5f;
+    float pinSaturation = 0.7f;
+
+    bool localHeld;
+
+    //gets the mouse position as a vec2 with coordinates 0-1
+    //within the bounds of the window
+    vec2 localMousePosition(const DrawableEnvironment& src) const{
+        return screenCast(foot, {{0,0},{1,1}})*src.getWorldMousePos();
+    }
+
+    PinableFrame(screen startpos = {{0,0},{100,100}})
+        :ScaleableFrame(startpos)
+    {
+        draggable = false;
+    }
+
+    virtual void update(DrawableEnvironment& src){
+        ScaleableFrame::update(src);
+        vec2 mousePos = src.getWorldMousePos();
+        vec2 pinCenter = foot.lower+vec2{pinRadius, pinRadius};
+        if(src.mouseLeftClick && lensqr(pinCenter-mousePos)<=pinRadius*pinRadius*pinSaturation*pinSaturation){
+            draggable = !draggable;
+            boxHeld = false;
+        }
+        localHeld = !draggable && src.mouseLeftHeld && foot.contains(src.getWorldMousePos());
+    }
+    virtual void draw(DrawableEnvironment& src){
+        DraggableFrame::draw(src);
+        Color col = draggable? Color::black : Color::red;
+        vec2 pinCenter = foot.lower+vec2{pinRadius, pinRadius};
+        src.getwin().draw_circle(src.wToScreen*pinCenter, int(pinRadius*pinSaturation*src.wToScreen.scale.x), col, Color::black);
+    }
+
+};
+
+struct grapher : PinableFrame{
     std::vector<float> graph;
     float miny, maxy;
 
@@ -341,8 +431,9 @@ struct grapher : DraggableFrame{
             graph[i] = hg*lwd + lw*(1-lwd);
         }
     }
+
     void draw(DrawableEnvironment& src){
-        DraggableFrame::draw(src);
+        PinableFrame::draw(src);
         if(graph.size() < 2) return;
 
         screen graphscr({0, miny}, {float(graph.size()-1), maxy});
