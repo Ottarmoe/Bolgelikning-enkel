@@ -1,3 +1,5 @@
+Good luck running this on anything but Windows
+
 You can move around by right-click dragging the window, 
 and zooming with the schroll wheel
 
