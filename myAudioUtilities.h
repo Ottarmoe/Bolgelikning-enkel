@@ -2,6 +2,12 @@
 
 #include <iostream>
 #include <windows.h>
+
+
+//for the windows multimedia waveform audio documentation, see
+//https://learn.microsoft.com/en-us/windows/win32/multimedia/devices-and-data-types
+//and
+//https://learn.microsoft.com/en-us/windows/win32/multimedia/waveform-functions
 #include <mmeapi.h>
 #include <stdint.h>
 #include <math.h>
@@ -19,6 +25,8 @@ struct audioBufferInfo{
 	std::vector<int16_t>* boundVector;
 };
 
+//as the waveOutCallback function executes on a seperate thread
+//the audio stream buffer vector needs to be thread-safe
 template<typename T>
 struct ThreadAdaptedVector{
 	std::vector<T> vec;
@@ -41,7 +49,7 @@ struct ThreadAdaptedVector{
 
 class AudioStream{
 private:
-	bool shouldClose = 0;
+	bool shouldClose = 0; //communicates with waveOutCallback to close the stream
 	uint sampleRate;
 	uint sampleBlockSize;
 	
@@ -53,15 +61,10 @@ private:
 	//this is done by a P regulator
 	double regSampleRate;
 	double kp = 0.5;
-	double ki = 0.1;
-	double ival;
-	uint64_t timeLastWrite;
-
 
 	WAVEFORMATEX wfx;
 	HWAVEOUT waveOut;
 
-	uint buffsize; //unused
 	//modified by callback functions, should not be modified by class when running
 	std::vector<int16_t> buff1, buff2;
 	WAVEHDR waveHdr1, waveHdr2;
@@ -86,7 +89,6 @@ private:
 			return 1;
     	}
 		//prepare buffers
-		timeLastWrite = timeMicroseconds();
 
 		waveHdr1 = WAVEHDR{0, 0, 0, 0, 0, 0, 0, 0};
 		waveHdr2 = WAVEHDR{0, 0, 0, 0, 0, 0, 0, 0};
@@ -98,7 +100,8 @@ private:
 		waveHdr2.lpData = LPSTR(buff2.data());
 		waveHdr2.dwUser = DWORD_PTR(&waveHdr2Inf);
     	waveHdr2.dwBufferLength = sampleBlockSize * sizeof(int16_t);
-		//queue buffers
+
+		//queue buffers, starting the rolling buffer system
 		waveOutPrepareHeader(waveOut, &waveHdr1, sizeof(WAVEHDR));
 		waveOutPrepareHeader(waveOut, &waveHdr2, sizeof(WAVEHDR));
 		waveOutWrite(waveOut, &waveHdr1, sizeof(WAVEHDR));
@@ -111,8 +114,7 @@ private:
     	waveOutUnprepareHeader(waveOut, &waveHdr2, sizeof(WAVEHDR));
 		waveOutReset(waveOut);
 		auto check = waveOutClose(waveOut);
-		if (check != MMSYSERR_NOERROR) std::cout << "stream closing not good\n";
-		else std::cout << "stream closing good\n";
+		if (check != MMSYSERR_NOERROR) std::cerr << "error on stream close\n";
 	}
 
 public:
@@ -126,7 +128,7 @@ public:
 	}
 	AudioStream(uint sampleRate = 44100, uint blockSize = 2000)
 		:sampleRate(sampleRate), sampleBlockSize(blockSize),
-		buffsize(blockSize*3), buff1(buffsize, 0), buff2(buffsize, 0)
+		buff1(blockSize*3, 0), buff2(blockSize*3, 0)
 	{
 		openConfigured();
 	}
@@ -158,6 +160,8 @@ public:
 		que.exit();
 	}
 
+	//get the number of samples wanted in time microseconds
+	//regulated to avoid buffer over/underflow
 	uint numQueuedIn(uint64_t time){
 		return uint(getSampleRate()*(double(time)/1000000.));
 	}
@@ -174,7 +178,7 @@ void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWO
 	if(pstrm->shouldClose) return;
 	
 	if(uMsg == WOM_CLOSE)
-		std::cout<<"WOM closed\n";
+		return;
 	
 	if(uMsg != WOM_DONE)
 		return;
@@ -187,26 +191,24 @@ void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWO
     // Release the audio buffer
     waveOutUnprepareHeader(hwo, pWaveHdr, sizeof(WAVEHDR));
 
-	//std::cout<<"swapping buffers"<<std::endl;
 	//swap buffers
 	pinf->boundVector->clear();
-	//std::lock_guard<std::mutex> guard(pstrm->queWriteControl);
 	pstrm->que.enter();
 	std::swap(pstrm->que.vec, *pinf->boundVector);
 
 	//format for new buffer data
 	uint writtenSize = uint(pinf->boundVector->size());
-	//std::cout<<"queued "<<writtenSize<<"\n";
 	uint writtenSizebuf = writtenSize;
+
 	//append zeroes to extend if too short
 	if(writtenSize < 1000){
 		if(writtenSize == 0) pinf->boundVector->push_back(0);
-		//std::cout<<"too little info written "<<writtenSize<<std::endl;
 		writtenSize = 1000;
 		for(uint i = (uint)pinf->boundVector->size(); i<1000; ++i)
 			pinf->boundVector->push_back(pinf->boundVector->at(i-1));
 	}
 	//move into the next stack if too long
+	//this is essential to prevent one buffer from becoming very big, and one very small
 	else if(writtenSize > pstrm->sampleBlockSize+500){
 		for(uint i = pstrm->sampleBlockSize; i<writtenSize; ++i){
 			pstrm->que.vec.push_back(pinf->boundVector->at(i));
@@ -214,6 +216,7 @@ void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWO
 		writtenSize = pstrm->sampleBlockSize;
 	}
 
+	//give the data to waveform audio
 	pWaveHdr->lpData = LPSTR(pinf->boundVector->data());
 	pWaveHdr->dwUser = DWORD_PTR(pinf);
     pWaveHdr->dwBufferLength = writtenSize * sizeof(int16_t);
@@ -223,26 +226,15 @@ void CALLBACK waveOutCallback(HWAVEOUT hwo, UINT uMsg, DWORD_PTR dwInstance, DWO
 	waveOutWrite(hwo, pWaveHdr, sizeof(WAVEHDR));
 
 	//P-regulator for desired sample rate
-	uint64_t currtime = timeMicroseconds();
-	//double measure = double(writtenSizebuf)/(double(currtime-pstrm->timeLastWrite)/1000000.);
-	//double push = double(pstrm->sampleRate);
 	double push = pstrm->sampleBlockSize;
 	double measure = writtenSizebuf;
 	double kp = pstrm->kp;
-	double ki = pstrm->ki;
 	double& dest = pstrm->regSampleRate;
-	double& ival = pstrm->ival;
 
 	double e = push-measure;
-	ival += e;
-	dest = double(pstrm->sampleRate)+e*kp + ival*ki*0;
+	dest = double(pstrm->sampleRate)+e*kp;
 	if(dest < 0) dest = 0;
-	//std::cout<<"new sample rate: "<<dest<<"\n";
-
-	pstrm->timeLastWrite = currtime;
 
 	pstrm->que.exit();
-	//std::cout<<"successfull callback execution"<<std::endl;
 	
-
 }

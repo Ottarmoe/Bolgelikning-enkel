@@ -144,13 +144,6 @@ struct zoomerControlSuite{
     }
 };
 
-
-struct controlRegister{
-    bool mouseHeld=0;
-    bool click=0;
-    vec2 mousepos = {0,0};
-};
-
 class DrawableEnvironment;
 
 struct Drawable{
@@ -264,8 +257,10 @@ public:
             eye.pos.y -= change.y;
         }
         eye.linzoom.value -= win.getScrollWheelMotion()*0.3;
+        //general controls
         updatePanner();
 
+        //update drawables
         for(auto dr : drawables)
             dr->update(*this);
     }
@@ -273,6 +268,7 @@ public:
     void render(){
         win.draw_circle(wToScreen*vec2{0,0}, int(10.*wToScreen.scale.x));
         drawGrid(10);
+        
         for(auto dr : drawables)
             dr->draw(*this);
         win.next_frame();
@@ -417,6 +413,10 @@ struct grapher : PinableFrame{
     void resize(uint siz){
         graph.resize(siz);
     }
+    grapher(uint size, float miny, float maxy, screen startpos = {{0,0},{100,100}})
+        :PinableFrame(startpos),
+        graph(size), miny(miny), maxy(maxy)
+    {}
 
     template<typename T> 
     void load(std::vector<T> gra, float fetch(const T&)){

@@ -69,8 +69,6 @@ class AnimationWindow {
     std::unordered_map<KeyboardKey, bool> currentKeyStates;
     bool currentLeftMouseButtonState = false;
     bool currentRightMouseButtonState = false;
-
-    //modded
     float deltaMouseWheel = 0;
 
    public:
@@ -112,10 +110,8 @@ class AnimationWindow {
     TDT4102::Point get_mouse_coordinates();
     bool is_left_mouse_button_down() const;
     bool is_right_mouse_button_down() const;
-
-    //modded
     float getScrollWheelMotion() const{
-        return deltaMouseWheel;
+        return deltaMouseWheel;
     }
 
     // Add a GUI widget to the window such that it becomes visible and the user can interact with it

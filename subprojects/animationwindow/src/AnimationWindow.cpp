@@ -77,8 +77,8 @@ void TDT4102::AnimationWindow::destroy() {
 
 void TDT4102::AnimationWindow::show_frame() {
     SDL_RenderPresent(rendererHandle);
-    
-    deltaMouseWheel = 0;
+
+    deltaMouseWheel = 0; //modded
 
     SDL_Event event;
     nk_input_begin(context);
@@ -105,10 +105,9 @@ void TDT4102::AnimationWindow::show_frame() {
                 currentRightMouseButtonState = false;
             }
         }
-        else if(event.type == SDL_MOUSEWHEEL){
+        else if(event.type == SDL_MOUSEWHEEL){ //modded
             deltaMouseWheel = event.wheel.preciseY;
         }
-
         nk_sdl_handle_event(&event);
     }
     nk_input_end(context);
